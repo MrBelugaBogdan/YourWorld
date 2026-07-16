@@ -1,147 +1,82 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YourWorld - Платформа Твого Світу</title>
-    <style>
-        /* Обнуляємо відступи, щоб гра була на весь екран */
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: #111111;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            user-select: none; /* Забороняємо виділення тексту під час гри */
-        }
+// client/engine.js
 
-        /* Ігрове UI поверх 3D сцени */
-        #ui-container {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: #ffffff;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 15px 20px;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(5px); /* Гарне розмиття заднього фону */
-            pointer-events: none; /* Кліки миші проходять крізь UI в гру */
-            max-width: 300px;
-        }
+let scene, camera, renderer;
+let playerMesh;
+const loader = new THREE.GLTFLoader(); // Завантажувач для будь-яких 3D моделей (.gltf / .glb)
 
-        #ui-container h1 {
-            margin: 0 0 10px 0;
-            font-size: 24px;
-            letter-spacing: 1px;
-            color: #4caf50; /* Зелений фірмовий колір */
-        }
+function init3D() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xa0a0a0); // Нейтральний колір студії
 
-        #ui-container p {
-            margin: 5px 0;
-            font-size: 13px;
-            color: #cccccc;
-            line-height: 1.4;
-        }
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 5, 10);
 
-        .highlight {
-            color: #ffffff;
-            font-weight: bold;
-        }
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-        /* Приціл по центру екрана */
-        #crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 10px;
-            height: 10px;
-            transform: translate(-50%, -50%);
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 24px;
-            font-weight: 300;
-            pointer-events: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+    // Світло для будь-яких типів моделей
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    scene.add(ambientLight);
 
-        /* Панель швидких дій знизу (для розробників карт) */
-        #creator-panel {
-            position: absolute;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(20, 20, 20, 0.85);
-            padding: 12px 24px;
-            border-radius: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 15);
+    scene.add(dirLight);
 
-        #creator-panel span {
-            color: #888888;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
+    // Проста сітка підлоги (Grid) — як у професійних 3D редакторах
+    const gridHelper = new THREE.GridHelper(100, 100);
+    scene.add(gridHelper);
 
-        /* Кнопки завантаження моделей */
-        .btn {
-            background: #2e7d32;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            font-size: 13px;
-            font-weight: bold;
-            cursor: pointer;
-            border-radius: 20px;
-            transition: all 0.2s ease;
-        }
+    // Візуальний маркер гравця (проста капсула, яку теж можна буде замінити на скін)
+    const playerGeo = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
+    const playerMat = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+    playerMesh = new THREE.Mesh(playerGeo, playerMat);
+    playerMesh.position.y = 1;
+    scene.add(playerMesh);
 
-        .btn:hover {
-            background: #4caf50;
-            transform: scale(1.05);
-        }
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
 
-        .btn:active {
-            transform: scale(0.95);
-        }
-    </style>
+    animate();
+}
 
-    <!-- 1. Підключаємо основне ядро Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- 2. Підключаємо завантажувач GLTF моделей (необхідний для кастомних 3D моделей творців) -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-</head>
-<body>
+// Головна гнучка функція: спавнить БУДЬ-ЯКИЙ об'єкт
+function spawnEntityInWorld(id, data) {
+    if (data.modelURL) {
+        // Якщо творець карти вказав посилання на 3D модель, завантажуємо її
+        loader.load(data.modelURL, (gltf) => {
+            const model = gltf.scene;
+            model.position.set(data.x, data.y, data.z);
+            model.scale.set(data.scale.x, data.scale.y, data.scale.z);
+            model.rotation.set(data.rotation.x, data.rotation.y, data.rotation.z);
+            model.name = id;
+            scene.add(model);
+        }, undefined, (error) => {
+            console.error('Не вдалося завантажити модель об\'єкта:', error);
+            // Фолбек: якщо модель не завантажилась, малюємо простий плейсхолдер куб
+            createFallbackCube(id, data);
+        });
+    } else {
+        // Якщо моделі немає — робимо базовий куб (корисно для швидких тестів)
+        createFallbackCube(id, data);
+    }
+}
 
-    <!-- Інформаційне табло -->
-    <div id="ui-container">
-        <h1>YourWorld V2.0</h1>
-        <p><span class="highlight">Рух:</span> Клавіші W, A, S, D</p>
-        <p><span class="highlight">Камера:</span> Автоматично слідує за тобою</p>
-        <p><span class="highlight">Спавн об'єктів:</span> Затисни <span class="highlight">Shift</span> та зроби <span class="highlight">Клік мишкою</span></p>
-        <p style="margin-top: 10px; font-size: 11px; color: #888;">Універсальний двіжок: сервер синхронізує будь-які завантажені сутності (Entities).</p>
-    </div>
+function createFallbackCube(id, data) {
+    const geo = new THREE.BoxGeometry(data.scale.x, data.scale.y, data.scale.z);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+    const cube = new THREE.Mesh(geo, mat);
+    cube.position.set(data.x, data.y, data.z);
+    cube.name = id;
+    scene.add(cube);
+}
 
-    <!-- Точка прицілу по центру екрана -->
-    <div id="crosshair">+</div>
+function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+}
 
-    <!-- Нижня панель інструментів розробника карти -->
-    <div id="creator-panel">
-        <span>Режим Творця:</span>
-        <button class="btn" onclick="alert('Для спавну утримуй Shift і клікай мишкою на сцені!')">Як будувати?</button>
-    </div>
-
-    <!-- 3. Підключаємо наші логічні файли двигуна -->
-    <script src="engine.js"></script>
-    <script src="client.js"></script>
-</body>
-</html>
+window.onload = init3D;
